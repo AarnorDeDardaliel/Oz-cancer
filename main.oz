@@ -8,6 +8,8 @@ import
    Property
    Browser
 define
+   Dummy % Variable for dev
+   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
    %%% Pour ouvrir les fichiers
    class TextFile
       from Open.file Open.text
@@ -22,27 +24,86 @@ define
    %%% @post: Fonction appellee lorsqu on appuie sur le bouton de prediction
    %%%        Affiche la prediction la plus probable du prochain mot selon les deux derniers mots entres
    %%% @return: Retourne une liste contenant la liste du/des mot(s) le(s) plus probable(s) accompagnee de 
-   %%%          la probabilite/frequence la plus elevee. 
+   %%%          la probabilite/frequence la plus elevee.
    %%%          La valeur de retour doit prendre la forme:
    %%%                  <return_val> := <most_probable_words> '|' <probability/frequence> '|' nil
-   %%%                  <most_probable_words> := <atom> '|' <most_probable_words> 
+   %%%                  <most_probable_words> := <atom> '|' <most_probable_words>
    %%%                                           | nil
    %%%                  <probability/frequence> := <int> | <float>
    fun {Press}
-      % TODO
-      0
+      local Ans in
+         Ans = nil
+
+         Ans
+      end
    end
    
-    %%% Lance les N threads de lecture et de parsing qui liront et traiteront tous les fichiers
-    %%% Les threads de parsing envoient leur resultat au port Port
+   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+   % Utiliser ?
+   %     case Folder of nil then skip
+   %     [] H|T then {Browse {String.toAtom H}} {ListAllFiles T}
+   %     end
+   %  ?  ?  ?
+
+   % Thread exec
+   proc {ReadBuffer N Total Port}
+      local LocBuf Tail Folder in
+         thread {ParseBuffer LocBuf Port} end
+         LocBuf = Tail
+         % Lancer la lecture (TODO)
+         Folder = {OS.getDir {GetSentenceFolder}}
+         {Read N Total LocBuf Tail}
+      end
+   end
+   proc {Read N Total LocBuf Tail}
+      % (TODO) Lit les fichiers (en se servant de N et Total pour savoir lesquels) et mets chaque ligne dans LocBuf
+      % Quand a finit, mets une poison pill (un nil !)
+      Dummy = 0
+   end
+   % proc{PutInBuffer X Var} % NOOOOOOOOOOOP PAS DANS UNE FONCTION SEPAREEEE (TODO : A effacer)
+   %    define Temp in Var = X|Temp
+   % end
+
+   proc {ParseBuffer Buffer Port}
+      % (DONE) Si le buffer n'est pas nil et a au moins 2 éléments, prendre le premier elem et le parse (le 2e est provisoire, et sera soit un elem soit nil)
+      case Buffer of
+      X|S2 then {Parse X Port} {ParseBuffer S2 Port}
+      [] nil then skip end
+   end
+   proc {Parse X Port}
+      % TODO : Parse X et envoit la rep sur le Port
+      Dummy = 0
+   end
+
+   proc {Save Port}
+      % (TODO) Lit le port Port pour centraliser le parsing et ne garder que les meilleures solutions
+      % Utiliser un arbre ? (conseillé mais je vois pas le concept)
+      Dummy = 0
+   end
+
+   % Launch Threads
+   proc {LaunchRead N Total Port}
+      case N of 0 then skip
+      else
+         thread {ReadBuffer N Total Port} end
+         {LaunchRead N-1 Total Port}
+      end
+   end
+
+   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   %%% Lance les N threads de lecture et de parsing qui liront et traiteront tous les fichiers
+   %%% Les threads de parsing envoient leur resultat au port Port
    proc {LaunchThreads Port N}
-        % TODO
-      skip
+      local Mid in
+         % le "main" sauvegarde, et chaque thread de lecture lance son thread de parsing
+         Mid = N div 2
+         {LaunchRead Mid Mid Port}
+         {Save Port}
+      end
    end
-   
-   %%% Ajouter vos fonctions et procédures auxiliaires ici
 
-
+   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
    %%% Fetch Tweets Folder from CLI Arguments
    %%% See the Makefile for an example of how it is called
    fun {GetSentenceFolder}
@@ -68,14 +129,15 @@ define
       %% se trouvant dans le dossier
       %%% N'appelez PAS cette fonction lors de la phase de
       %%% soumission !!!
-      % {ListAllFiles {OS.getDir TweetsFolder}}
+      %{ListAllFiles {OS.getDir TweetsFolder}}
+      %{Browse {OS.getDir TweetsFolder}}
        
-      local NbThreads InputText OutputText Description Window SeparatedWordsStream SeparatedWordsPort in
+      local NbThreads Folder InputText OutputText Description Window SeparatedWordsStream SeparatedWordsPort in
 	 {Property.put print foo(width:1000 depth:1000)}  % for stdout siz
 	 
             % TODO
 	 
-            % Creation de l interface graphique
+            % Creation de l'interface graphique
 	 Description=td(
 			title: "Text predictor"
 			lr(text(handle:InputText width:50 height:10 background:white foreground:black wrap:word) button(text:"Predict" width:15 action:Press))
@@ -90,7 +152,7 @@ define
 	 {InputText tk(insert 'end' "Loading... Please wait.")}
 	 {InputText bind(event:"<Control-s>" action:Press)} % You can also bind events
 	 
-            % On lance les threads de lecture et de parsing
+   % On lance les threads de lecture et de parsing
 	 SeparatedWordsPort = {NewPort SeparatedWordsStream}
 	 NbThreads = 4
 	 {LaunchThreads SeparatedWordsPort NbThreads}
