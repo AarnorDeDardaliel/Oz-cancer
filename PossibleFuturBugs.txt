@@ -1,1 +1,3 @@
 - Ordre des arguments (notamment fonction Send pour les Ports)
+- Nombre de threads imposé : pour le moment, on suppose un thread par file
+- 

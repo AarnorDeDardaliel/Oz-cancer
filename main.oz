@@ -1,5 +1,5 @@
 functor
-import 
+import
    QTk at 'x-oz://system/wp/QTk.ozf'
    System
    Application
@@ -11,6 +11,7 @@ define
    Dummy % Variable for dev
    TreeDatabase % Variable Globale
    NFiles % Variable globale
+   TweetsFolder % Variable globale
    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
    %%% Pour ouvrir les fichiers
    class TextFile
@@ -49,64 +50,110 @@ define
    
    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-   % Read Execution
-   proc {Read From To Folder Tail}
-      % TODO : Lit les fichiers et les mets dans LocBuff en remplaçant Tail
-      % Quand a finit, mets un nil
+   % Read File and send caracs on LocBuff - 1 thread for each file exec
+   proc {Read1File File Tail}
+      local NewTail in
+         local
+            proc {PutLetterInStream Word}
+               Tail = Word|NewTail
+            end
+         in 
+            {File read(list:{PutLetterInStream} size:1)}
+            {Read1File File NewTail}
+         end
+      end
+   end
+   % Read File(s) and send on LocBuff - thread number imposed
+   proc {ReadXFile N Total Folder Tail}
       Dummy = 0
    end
 
-   % Parse Execution
-   proc {ParseBuffer Buffer Port}
-      % Si le buffer n'est pas nil et a au moins 2 éléments, prendre le premier elem et le parse (le 2e est provisoire, et sera soit un elem soit nil)
-      case Buffer of
-      X|S2 then {Parse X Port} {ParseBuffer S2 Port}
-      [] nil then skip end
-   end
-   proc {Parse Line Port}
-      % TODO : Parse Line
-      Dummy = 0
-      % Envoie la rep sur le Port
+   % Parse LocBuff : Reconstruire les mots et les envoyer sur le Port
+   proc {ParseBuffer Buffer Port TheWord Tail}
+      local NewWord NewTail in
+         local
+            proc {Parse Carac}
+               local 
+                  proc {SendWord X}
+                     Tail = nil
+                     {Send Port X}
+                     NewWord = NewTail
+                  end
+               in
+                  % If Carac == " ", add nil à TheWord et l'envoie sur le Port. NewWord = NewTail = stream vide.
+                  % If Carac == "\n" ou nil, même chose mais envoie aussi le mot "\n" sur le Port => Les retours à la ligne sont des "\r\n", mais étrangement on peut ignorer les "\r"
+                  % Sinon, NewWord = TheWord, Tail = Carac|NewTail
+                  case Carac of " " then {SendWord TheWord}
+                  [] "\n" then {SendWord TheWord} {Send Port "\n"}
+                  [] nil then {SendWord TheWord} {Send Port "\n\n\n"}
+                  else
+                     NewWord = TheWord
+                     Tail = Carac.1|NewTail
+                  end
+               end
+            end
+         in
+            % Si le buffer n'est pas nil et a au moins 1 élément défini, le parse
+            case Buffer of
+            X|S2 then {Parse X} {ParseBuffer S2 Port NewWord NewTail}
+            [] nil then skip end
+         end
+      end
    end
 
    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
    %%% Lance les N threads de lecture et de parsing qui liront et traiteront tous les fichiers
    %%% Les threads de parsing envoient leur resultat au port Port
    proc {LaunchThreads Port N}
-      local Mid in
-         Mid = N div 2
-         {RecLaunchThreads Mid Mid Port}
-      end
-   end
-   proc {RecLaunchThreads N Total Port}
-      case N of 0 then skip
-      else
-         thread 
-            local LocBuf Tail Folder in
-               % Thread pour parser les infos
-               thread {ParseBuffer LocBuf Port} {PressHelper} end
+      local 
+         FoldName = {Append TweetsFolder "/"}
+         % Execution si on veut 2 threads par file (1 pour lire, 1 pour parse)
+         proc {FullLaunchThreads Folder}
+            case Folder of nil then skip
+            [] H|T then
+               thread
+                  local LocBuf Tail File Name Empty in
+                     % Thread pour parser les infos
+                     thread {ParseBuffer LocBuf Port Empty Empty} {PressHelper} end
 
-               % Lit les fichiers !! (sous-fonction récursive pour Tail)
-               Folder = {OS.getDir {GetSentenceFolder}}
-               LocBuf = Tail
-               {Read N Total Folder Tail}
+                     % Lit les fichiers !! (sous-fonction récursive pour Tail)
+                     Name = {Append FoldName H}
+                     File = {New Open.file init(name:{String.toAtom Name} flags:[read])}
+                     LocBuf = Tail
+                     {Read1File File Tail}
+                  end
+                  {PressHelper}
+               end
+               {FullLaunchThreads T}
             end
-            {PressHelper}
          end
-         {RecLaunchThreads N-1 Total Port}
+         % Execution pour un nombre de threads donné
+         proc {DefLaunchThreads Folder}
+            {Browse 0}
+         end
+      in
+         % Lancement de la procédure
+         local Mid SourceFolder in
+            Mid = N div 2
+            SourceFolder = {OS.getDir TweetsFolder}
+            case Mid of NFiles then {FullLaunchThreads SourceFolder} else {DefLaunchThreads SourceFolder} end
+         end
       end
    end
 
+   % Lit le stream de mots, et enregistre tous les triplés dans la database. Compte également le nombre de Threads qui ont terminé pour savoir quand s'arrêter
+   % ATTENTION, valeur initiale de NilCount = 1 !!
    proc {SaveFromStream TheStream TreeDatabase NilCount NbThreads}
-         case TheStream of H|T then
-            case H of nil then
-               NilCount = NilCount + 1
-               case NilCount of NbThreads then skip else {SaveFromStream T TreeDatabase NilCount NbThreads} end
-            else
-               % TODO : Enregistrer H dans TreeDatabase !
+      case TheStream of H|T then
+         case H of nil then
+            {Browse 0}
+            case NilCount of NbThreads then skip else {SaveFromStream T TreeDatabase NilCount+1 NbThreads} end
+         else
+            % TODO : Enregistrer H dans TreeDatabase !
+            {Browse H}
 
-               {SaveFromStream T TreeDatabase NilCount NbThreads}
-            end
+            {SaveFromStream T TreeDatabase NilCount NbThreads}
+         end
       end
    end
 
@@ -121,8 +168,7 @@ define
     
    %%% Procedure principale qui cree la fenetre et appelle les differentes procedures et fonctions
    proc {Main}
-      TweetsFolder = {GetSentenceFolder}
-   in local NbThreads Folder InputText OutputText Description Window SeparatedWordsStream SeparatedWordsPort in
+      local NbThreads SourceFolder InputText OutputText Description Window SeparatedWordsStream SeparatedWordsPort in
          {Property.put print foo(width:1000 depth:1000)}  % for stdout siz
       
          % Creation de l'interface graphique
@@ -141,23 +187,27 @@ define
          {InputText bind(event:"<Control-s>" action:Press)} % You can also bind events
       
          % Compter le nombre de fichiers
-         Folder = {OS.getDir {GetSentenceFolder}}
-         fun {CountAllFiles LocFolder Acc}
-            case LocFolder of nil then Acc
-            [] H|T then  {CountAllFiles T Acc+1}
+         TweetsFolder = {GetSentenceFolder}
+         SourceFolder = {OS.getDir TweetsFolder}
+         local
+            fun {CountAllFiles LocFolder Acc}
+               case LocFolder of nil then Acc
+               [] H|T then  {CountAllFiles T Acc+1}
+               end
             end
+         in
+            NFiles = {CountAllFiles SourceFolder 0}
          end
-         NFiles = {CountAllFiles Folder 0}
 
          % On lance les threads de lecture et de parsing, puis de création de la Database
          NbThreads = NFiles * 2
          SeparatedWordsPort = {NewPort SeparatedWordsStream}
          {LaunchThreads SeparatedWordsPort NbThreads}
-         {SaveFromStream SeparatedWordsStream TreeDatabase 0 NbThreads}
+         {SaveFromStream SeparatedWordsStream TreeDatabase 1 NbThreads}
       
          {InputText set(1:"")}
       end
    end
-    % Appelle la procedure principale
+   % Appelle la procedure principale
    {Main}
 end
