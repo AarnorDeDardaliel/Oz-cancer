@@ -50,16 +50,62 @@ define
    
    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-   % Read File and send caracs on LocBuff - 1 thread for each file exec
-   proc {Read1File File Tail}
-      local NewTail in
+   % Read File and send words on BuffTail - 1 thread for each file exec
+   % WordHead and WordTail are used to assemble caracs into words, as we read the file
+   % Valid is 1 if there is at least 1 letter in the word
+   proc {Read1File File BuffTail Valid WordHead WordTail}
+      local NewBuffTail NewValid NewWordHead NewWordTail in
          local
-            proc {PutLetterInStream Word}
-               Tail = Word|NewTail
+            proc {Manage Carac}
+               local
+                  proc {Skip}
+                     NewBuffTail = BuffTail
+                     NewValid = Valid
+                     NewWordHead = WordHead
+                     NewWordTail = WordTail
+                  end
+                  proc {SendWord X}
+                     if Valid == 1 then
+                        WordTail = nil
+                        BuffTail = WordHead|NewBuffTail
+                        NewWordHead = NewWordTail
+                        NewValid = 0
+                     else {Skip} end
+                  end
+                  proc {SendEndWord X}
+                     if Valid == 1 then
+                        WordTail = nil
+                        BuffTail = WordHead|"\n"|NewBuffTail
+                        NewWordHead = NewWordTail
+                        NewValid = 0
+                     else {Skip} end
+                  end
+               in
+                  % If Carac == "'" ou "-", skip (transmettre les variables à la récursion suivante)
+                  % If Carac == " ", add nil à WordHead et l'envoie sur le Buffer. NewWordHead = NewBuffTail = stream vide.
+                  % If Carac == ".", "!", "\n" ou nil, même chose mais envoie aussi le mot "\n" sur le Buffer ("\n\n\n" pour nil) => Les retours à la ligne sont des "\r\n", mais étrangement on peut ignorer les "\r"
+                  % Sinon, NewWordHead = WordHead, BuffTail = Carac|NewBuffTail
+                  case Carac of "'" then {Skip}
+                  [] "-" then {Skip}
+
+                  [] " " then {SendWord WordHead}
+                  [] "," then {SendWord WordHead}
+
+                  [] "!" then {SendEndWord WordHead}
+                  [] "." then {SendEndWord WordHead}
+                  [] "\n" then {SendEndWord WordHead}
+                  [] nil then {SendEndWord WordHead}
+                  
+                  else % Ajouter la lettre au mot
+                     NewWordHead = WordHead
+                     WordTail = Carac.1|NewWordTail
+                     NewValid = 1
+                  end
+               end
             end
-         in 
-            {File read(list:{PutLetterInStream} size:1)}
-            {Read1File File NewTail}
+         in
+            {File read(list:{Manage} size:1)}
+            {Read1File File NewBuffTail NewValid NewWordHead NewWordTail}
          end
       end
    end
@@ -68,34 +114,48 @@ define
       Dummy = 0
    end
 
-   % Parse LocBuff : Reconstruire les mots et les envoyer sur le Port
-   proc {ParseBuffer Buffer Port TheWord Tail}
+
+
+
+   % 
+   % Count = 0
+   % Triples = []
+   % Sent : []
+   % 
+   % Count = 1
+   % Triples = [["coucou,"]]
+   % Sent : []
+   % 
+   % Count = 2
+   % Triples = [["coucou," "Je"] ["Je"]]
+   % Sent : []
+   % 
+   % Count = 3
+   % Triples = [["Je" "M'appelle"] ["M'appelle"]]
+   % Sent : ["coucou," "Je" "M'appelle"]
+   % 
+   % 
+   % Count = 3
+   % Triples = [["M'appelle" "Bryce,"] ["Bryce,"]]
+   % Sent : ["coucou," "Je" "M'appelle"] ["Je" "M'appelle" "Bryce,"]
+   % 
+   % Count = 3
+   % Triples = [["coucou," "Je" "M'appelle"] ["Je" "M'appelle"] ["M'appelle"]]
+   % Sent : ["coucou," "Je" "M'appelle"]
+
+
+   % Parse LocBuff : Faire des listes de N mots en les envoyer sur le Port
+   proc {ParseBuffer N Buffer Port TheWord Tail}
       local NewWord NewTail in
          local
-            proc {Parse Carac}
-               local 
-                  proc {SendWord X}
-                     Tail = nil
-                     {Send Port X}
-                     NewWord = NewTail
-                  end
-               in
-                  % If Carac == " ", add nil à TheWord et l'envoie sur le Port. NewWord = NewTail = stream vide.
-                  % If Carac == "\n" ou nil, même chose mais envoie aussi le mot "\n" sur le Port => Les retours à la ligne sont des "\r\n", mais étrangement on peut ignorer les "\r"
-                  % Sinon, NewWord = TheWord, Tail = Carac|NewTail
-                  case Carac of " " then {SendWord TheWord}
-                  [] "\n" then {SendWord TheWord} {Send Port "\n"}
-                  [] nil then {SendWord TheWord} {Send Port "\n\n\n"}
-                  else
-                     NewWord = TheWord
-                     Tail = Carac.1|NewTail
-                  end
-               end
+            proc {Parse Word}
+               % TODO : Faire des triplettes avec le stream de words
+               {Browse Word}
+               Dummy = 0
             end
          in
-            % Si le buffer n'est pas nil et a au moins 1 élément défini, le parse
             case Buffer of
-            X|S2 then {Parse X} {ParseBuffer S2 Port NewWord NewTail}
+            W|S2 then {Parse W} {ParseBuffer N S2 Port NewWord NewTail}
             [] nil then skip end
          end
       end
@@ -104,7 +164,7 @@ define
    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
    %%% Lance les N threads de lecture et de parsing qui liront et traiteront tous les fichiers
    %%% Les threads de parsing envoient leur resultat au port Port
-   proc {LaunchThreads Port N}
+   proc {LaunchThreads Port NbThreads}
       local 
          FoldName = {Append TweetsFolder "/"}
          % Execution si on veut 2 threads par file (1 pour lire, 1 pour parse)
@@ -112,36 +172,36 @@ define
             case Folder of nil then skip
             [] H|T then
                thread
-                  local LocBuf Tail File Name Empty in
-                     % Thread pour parser les infos
-                     thread {ParseBuffer LocBuf Port Empty Empty} {PressHelper} end
-
+                  local LocBuf Tail File Name in
+                     % Thread pour parser les infos (N-gramme)
+                     thread local Empty in {ParseBuffer 3 LocBuf Port Empty Empty} end {PressHelper} end
+                     
                      % Lit les fichiers !! (sous-fonction récursive pour Tail)
                      Name = {Append FoldName H}
                      File = {New Open.file init(name:{String.toAtom Name} flags:[read])}
                      LocBuf = Tail
-                     {Read1File File Tail}
+                     local Empty in {Read1File File Tail 0 Empty Empty} end
                   end
                   {PressHelper}
                end
                {FullLaunchThreads T}
             end
          end
-         % Execution pour un nombre de threads donné
+         % Execution pour un nombre de threads imposé
          proc {DefLaunchThreads Folder}
             {Browse 0}
          end
       in
          % Lancement de la procédure
          local Mid SourceFolder in
-            Mid = N div 2
+            Mid = NbThreads div 2
             SourceFolder = {OS.getDir TweetsFolder}
             case Mid of NFiles then {FullLaunchThreads SourceFolder} else {DefLaunchThreads SourceFolder} end
          end
       end
    end
 
-   % Lit le stream de mots, et enregistre tous les triplés dans la database. Compte également le nombre de Threads qui ont terminé pour savoir quand s'arrêter
+   % Enregistre les N-gramme dans la database. Compte également le nombre de Threads qui ont terminé pour savoir quand s'arrêter
    % ATTENTION, valeur initiale de NilCount = 1 !!
    proc {SaveFromStream TheStream TreeDatabase NilCount NbThreads}
       case TheStream of H|T then
