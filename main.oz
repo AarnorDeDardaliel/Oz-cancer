@@ -150,12 +150,49 @@ define
             case NilCount of NbThreads then skip else {SaveFromStream T TreeDatabase NilCount+1 NbThreads} end
          else
             % TODO : Enregistrer H dans TreeDatabase !
-            {Browse H}
+            {InsertFirst H TreeDatabase}
 
             {SaveFromStream T TreeDatabase NilCount NbThreads}
          end
       end
    end
+
+   proc {InsertFirst H Tree}
+      case H|T of
+	 nil then nil
+      [] if T==nil then nil
+	 end
+      end
+      
+      case Tree of leaf then %there is no database for the moment
+	 tree(key:H.1 value:H.2.1 leaf leaf)
+	 {InsertSec H.2 leaf} %for the moment, the second tree doens't exist
+      [] tree(key:Y value:V T1 T2) andthen H.1 == Y then %means we found first word, we must insert in the second tree which is V
+	 {InsertSec H.2 V}
+      [] tree(key:Y value:V T1 T2) andthen H.1 < Y then
+	 tree(key: Y value:V  {InsertFirst H.1 T} T2)
+      [] tree(key:Y value:V T1 T2) andthen H.1 > Y then
+	 tree(key: Y value:V T1 {InsertFirst H.1 T})
+      end
+   end
+
+   proc  {InsertSec H Tree}
+      case H|T of
+	 nil then nil
+      [] if T==nil then nil
+	 end
+      end
+      case Tree of leaf then %the 2nd tree doesn't exist
+	 tree(key:H.1 value:H.2 leaf leaf) %we've initialised the 3rd to be word|nil and we will build rest of list off of this
+      [] tree(key:Y value:V T1 T2) andthen H.1 == Y then %we add the 3word to the list of words
+	 tree(key: Y value H.2.1|V T1 T2)
+      [] tree(key:Y value:V T1 T2) andthen H.1 < Y then
+	 tree(key: Y value:V  {InsertSec H.1 T} T2)
+      [] tree(key:Y value:V T1 T2) andthen H.1 > Y then
+	 tree(key: Y value:V T1 {InsertSec H.1 T})
+      end
+   end
+
 
    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
    %%% Fetch Tweets Folder from CLI Arguments
