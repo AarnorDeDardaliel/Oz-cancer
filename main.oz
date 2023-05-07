@@ -220,7 +220,7 @@ define
    proc {InsertFirst H Tree}
       case H|T of
 	 nil then nil
-      [] if T==nil then nil
+      [] T==nil then nil
 	 end
       end
       
@@ -230,16 +230,16 @@ define
       [] tree(key:Y value:V T1 T2) andthen H.1 == Y then %means we found first word, we must insert in the second tree which is V
 	 {InsertSec H.2 V}
       [] tree(key:Y value:V T1 T2) andthen H.1 < Y then
-	 tree(key: Y value:V  {InsertFirst H.1 T} T2)
+	 tree(key: Y value:V  {InsertFirst H T} T2)
       [] tree(key:Y value:V T1 T2) andthen H.1 > Y then
-	 tree(key: Y value:V T1 {InsertFirst H.1 T})
+	 tree(key: Y value:V T1 {InsertFirst H T})
       end
    end
 
    proc  {InsertSec H Tree}
       case H|T of
 	 nil then nil
-      [] if T==nil then nil
+      [] T==nil then nil
 	 end
       end
       case Tree of leaf then %the 2nd tree doesn't exist
@@ -247,9 +247,9 @@ define
       [] tree(key:Y value:V T1 T2) andthen H.1 == Y then %we add the 3word to the list of words
 	 tree(key: Y value H.2.1|V T1 T2)
       [] tree(key:Y value:V T1 T2) andthen H.1 < Y then
-	 tree(key: Y value:V  {InsertSec H.1 T} T2)
+	 tree(key: Y value:V  {InsertSec H T} T2)
       [] tree(key:Y value:V T1 T2) andthen H.1 > Y then
-	 tree(key: Y value:V T1 {InsertSec H.1 T})
+	 tree(key: Y value:V T1 {InsertSec H T})
       end
    end
 
