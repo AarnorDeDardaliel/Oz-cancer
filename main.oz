@@ -8,10 +8,13 @@ import
    Property
    Browser
 define
+   NG = 2
    Dummy % Variable for dev
    TreeDatabase % Variable Globale
    NFiles % Variable globale
    TweetsFolder % Variable globale
+   InputText % Pour Press
+   OutputText % Pour Press
    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
    %%% Pour ouvrir les fichiers
    class TextFile
@@ -35,45 +38,95 @@ define
    %%%                                           | nil
    %%%                  <probability/frequence> := <int> | <float>
    fun {Press}
-      local Ans Val Freq in
-         % TODO : Chercher la liste dans TreeDatabase
-         % Etablir la réponse
-         Val = nil % Liste des most probable words
-         Freq = 0
-	 Ans = Val | Freq | nil
-	 %Listofwords = {FindFirst Words TreeDatabase} %Words are the two words that the users has writte 
-         Ans
+      % Lancer le thread assistant
+      % thread {PressHelper} end
+
+      % Procédure principale
+      local Words WordsTree BestAndTotal Val Freq Ans
+         % Renvoie le sub tree des potentiels N+1e mots
+         fun {FindSubTree Words Tree}
+            case Words of nil then Tree
+            else
+               case Tree of leaf then nil
+               [] tree(key:Y value:V T1 T2) then
+                  local Letter TheKey in
+                     Letter = {String.toAtom Words.1}
+                     TheKey = {String.toAtom Y}
+
+                     if {Int.is V} then Tree
+                     elseif Letter == TheKey then {FindSubTree Words.2 V}
+                     elseif Letter < TheKey then {FindSubTree Words T1}
+                     elseif Letter > TheKey then {FindSubTree Words T2}
+                     end
+                  end
+               end
+            end
+         end
+         % Renvoie Best|Total|nil, avec Total la somme des occurences de tous les mots, et Best le meilleur nombre d'occurences
+         fun {FindBestAndTotal SubTree TotLoc BestLoc}
+            local LeftResult NewTot NewBest in
+               case SubTree of leaf then BestLoc|TotLoc|nil
+               [] tree(key:Y value:V T1 T2) then
+                  if SubTree.value > BestLoc then LeftResult = {FindBestAndTotal T1 TotLoc SubTree.value}
+                  else LeftResult = {FindBestAndTotal T1 TotLoc BestLoc} 
+                  end
+                  
+                  NewTot = TotLoc + LeftResult.2.1 + SubTree.value
+                  NewBest = LeftResult.1
+                  {FindBestAndTotal T2 NewTot NewBest}
+               else 0
+               end
+            end
+         end
+         % Sur base du meilleur nom d'occurences, renvoies une liste des mots concernés
+         fun {FindWords TheVal SubTree List}
+            local LeftResult in
+               case SubTree of leaf then List
+               [] tree(key:Y value:V T1 T2) then
+                  if SubTree.value == TheVal then LeftResult = {FindWords TheVal T1 Y|List}
+                  else LeftResult = {FindWords TheVal T1 List}
+                  end
+                  {FindWords TheVal T2 LeftResult}
+               end
+            end
+         end
+         fun {TestLen X}
+            local 
+               fun {TestLenLoc X Acc}
+                  case X of nil then Acc
+                  [] H|T then {TestLenLoc X.2 Acc+1}
+                  end
+               end
+            in
+               {TestLenLoc X 0}
+            end
+         end
+      in
+         % Chercher l'ensemble des mots possibles dans la database
+         {InputText get(Words)}
+         if {TestLen Words} == NG then
+            WordsTree = {FindSubTree Words TreeDatabase} % Words are the two words that the users has written
+            if WordsTree == nil then {OutputText set(1: nil|0|nil)}
+            else
+               % Chercher le meilleur nombre d'occurences et le total d'occurences
+               BestAndTotal = {FindBestAndTotal WordsTree 0 0}
+               if BestAndTotal.1 == 0 then {OutputText set(1: nil|0|nil)}
+               else
+                  % Structure de la réponse
+                  Freq = {Int.toFloat BestAndTotal.1} / {Int.toFloat BestAndTotal.2.1}
+                  Val = {FindWords BestAndTotal.1 WordsTree nil}
+                  Ans = Val|Freq|nil
+                  {OutputText set(1: Ans)}
+               end
+            end
+         else {OutputText set(1: nil|0|nil)}
+         end
       end
    end
 
-   proc {PressHelper} % Procédure exécutée par chaque thread après l'initialisation (Useless pour le moment je pense. Pour les bonus ?)
+   proc {PressHelper} % Procédure exécutée par les threads pour aider Press (pas le temps rip)
       Dummy = 0
    end
-
-   %fun {FindFirst Words Tree}
-    %  case Tree
-     % of leaf then nil
-      %[] tree(key:Y value:V T1 T2) andthen Words.1 == Y then
-%	 {FindSec Words.2 V}
- %     [] tree(key:Y value:V T1 T2) andthen Words.1 < Y then
-%	 {FindFirst Words T1}
- %     [] tree(key:Y value:V T1 T2) andthen Words.1 > Y then
-%	 {FindFirst Words T2}
- %  end
-%end
-%fun {FindSec Words Tree}
- %  case Tree
-  % of leaf then nil
-   %[] tree(key:Y value:V T1 T2) andthen Words.1 == Y then
-    %  V
-   %[] tree(key:Y value:V T1 T2) andthen Words.1 < Y then
-    %  {FindSec Words T1}
-   %[] tree(key:Y value:V T1 T2) andthen Words.1 > Y then
-    %  {FindSec Words T2}
-   %end
-%end      
-      
-   
    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
    % Read File and send words on BuffTail - 1 thread for each file exec
@@ -153,9 +206,8 @@ define
       end
    end
 
-   % Parse WordBuff : Faire des listes de N mots en les envoyer sur le Port
+   % Parse WordBuff : Faire des listes de NG+1 mots en les envoyer sur le Port
    % Inputs :
-   %     - N : Le N de "N-gramme"
    %     - WordBuff : Le buffer de mots à lire
    %     - Port : Le Port sur lequel envoyer les listes
    %     - 
@@ -163,18 +215,16 @@ define
    %     - 
    % Procédure pour chaque mot : 
    %     - L'ajoute à la première étape du WorkTree
-   %     - Si Count est > N, l'envoie prends le suivant comme future tête
+   %     - Si Count est > NG, l'envoie prends le suivant comme future tête
    %     - L'ajoute aux étapes suivantes
    %     - Crée l'étape suivante avec le mot
    %
    %     => POUR ETAPES VISUELLES, VOIR Ngramme.oz !!
    %
-   proc {ParseWords N WordBuff Port WorkTree WorkTails Count}
+   proc {ParseWords WordBuff Port WorkTree WorkTails Count}
       local NewWorkTree NewWorkTails NewTailsTail in
          local
             proc {Manage WordHead WordTail X Step}
-               % {Browse Count|Step|nil}
-               % {Browse WordHead}
 
                local NewWordTail NewTreeTail in
                   if Step == Count then % Ajouter l'étape suivante, puis si c'est le tout premier set NewWorkTree et NewWorkTree, sinon juste NewTailsTail
@@ -188,7 +238,7 @@ define
                      end
 
                   elseif Step == 0 then
-                     if Count < N then
+                     if Count < NG then
                         % Si Count est < N (équilibre pas encore atteint), ajouter X mais garder le même NewWorkTree (et set NewWorkTails = NewWordTail|NewTailsTail)
                         WordTail.1 = X|NewWordTail
                         NewWorkTails = NewWordTail|NewTailsTail
@@ -204,7 +254,7 @@ define
                         {Manage WordHead.2 WorkTails.2 X Step+1}
                      end
                      
-                  elseif Step == N then % Ajouter l'étape suivante et c'est fini ! (Pareil que Step == Count > 0, mais chiant et inutile de bloquer Count à N)
+                  elseif Step == NG then % Ajouter l'étape suivante et c'est fini ! (Pareil que Step == Count > 0, mais chiant et inutile de bloquer Count à NG)
                      WordHead = (X|NewWordTail)|NewTreeTail
                      NewTailsTail = NewWordTail|NewTreeTail
 
@@ -221,10 +271,10 @@ define
             case WordBuff
             of H|T then
                case H of "\n" then % Fin de phrase
-                  {ParseWords N T Port NewWorkTree NewWorkTails 0}
+                  {ParseWords T Port NewWorkTree NewWorkTails 0}
                else
                   {Manage WorkTree WorkTails H 0}
-                  {ParseWords N T Port NewWorkTree NewWorkTails Count+1}
+                  {ParseWords T Port NewWorkTree NewWorkTails Count+1}
                end
             [] nil then {Send Port nil} % Fin d'exécution !
             end
@@ -233,7 +283,7 @@ define
    end
 
    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   %%% Lance les N threads de lecture et de parsing qui liront et traiteront tous les fichiers
+   %%% Lance les NbThreads threads de lecture et de parsing qui liront et traiteront tous les fichiers
    %%% Les threads de parsing envoient leur resultat au port Port
    proc {LaunchThreads Port NbThreads}
       local
@@ -246,15 +296,14 @@ define
                   local File Name CaracBuff WordBuff in
 
                      % Thread pour parser les infos (N-gramme)
-                     thread local LocBuff in {ParseCaracs CaracBuff LocBuff LocBuff WordBuff} end {PressHelper} end
-                     thread local LocBuff2 LocTails2 in {ParseWords 2 WordBuff Port LocBuff2 LocTails2 0} end {PressHelper} end
+                     thread local LocBuff in {ParseCaracs CaracBuff LocBuff LocBuff WordBuff} end end
+                     thread local LocBuff2 LocTails2 in {ParseWords WordBuff Port LocBuff2 LocTails2 0} end end
                      
                      % Lit les fichiers !! (sous-fonction récursive pour CaracTail)
                      Name = {Append FoldName H}
                      File = {New Open.file init(name:{String.toAtom Name} flags:[read])}
                      local Empty in {Read1File File CaracBuff} end
                   end
-                  {PressHelper}
                end
                {FullLaunchThreads T}
             end
@@ -275,58 +324,54 @@ define
 
    % Enregistre les N-gramme dans la database. Compte également le nombre de Threads qui ont terminé pour savoir quand s'arrêter
    % ATTENTION, valeur initiale de NilCount = 1 !!
-   proc {SaveFromStream TheStream NilCount NbThreads LocDatabase}
+   proc {SaveFromStream NbThreads TheTree TheStream NilCount}
       case TheStream of H|T then
          case H of nil then
-            {Browse 0}
-            case NilCount of NbThreads then 
-               TreeDatabase = LocDatabase 
-               {Browse TreeDatabase}
-            else {SaveFromStream T NilCount+1 NbThreads LocDatabase} end
+            case NilCount of NbThreads then
+               TreeDatabase = TheTree
+            else {SaveFromStream TheTree T NilCount+1 NbThreads} end
          else
-            % TODO : Enregistrer H dans TreeDatabase ! (Pour l'instant je fais avec une liste)
-            {SaveFromStream T NilCount NbThreads H|LocDatabase}
+            local NewTree in
+               % Enregistrer H dans TreeDatabase ! (Pour faire avec une liste : {SaveFromStream T NilCount NbThreads H|LocDatabase})
+               NewTree = {InsertTrees TheTree H 0}
+               {SaveFromStream NbThreads NewTree T NilCount}
+            end
          end
       end
    end
 
-   proc {InsertFirst H}
-      %case H|T of
-	   %nil then nil
-      %[] T==nil then nil
-	   %end
-      %
-      %case Tree of leaf then %there is no database for the moment
-	      %tree(key:H.1 value:H.2.1 leaf leaf)
-	      %{InsertSec H.2 leaf} %for the moment, the second tree doens't exist
-      %[] tree(key:Y value:V T1 T2) andthen H.1 == Y then %means we found first word, we must insert in the second tree which is V
-	      %{InsertSec H.2 V}
-      %[] tree(key:Y value:V T1 T2) andthen H.1 < Y then
-	      %tree(key: Y value:V  {InsertFirst H T} T2)
-      %[] tree(key:Y value:V T1 T2) andthen H.1 > Y then
-	      %tree(key: Y value:V T1 {InsertFirst H T})
-      %end
-      
-      Dummy = 0
-   end
+   % Insert TheSeq in Tree :
+   %     - Tree est la tête de l'arbre local
+   %     - TheSeq = "AA"|"BB"|"CC"|nil, puis "BB"|"CC"|nil, ...
+   %     - Index est l'index de l'élément en cours (si Index == NG, Tree est une liste !)
+   fun {InsertTrees Tree Seq Index}
+      % Insérer au bon endroit l'élem et passer au suivant
+      local NewTree in
+         case Tree of leaf then
+            if Index == NG then % Si on en est au mot à deviner et qu'il n'existe pas
+               tree(key:Seq.1 value:1 leaf leaf)
+            else
+               % Create the tree to add here, with as value a new tree with the next elem
+               NewTree = {InsertTrees leaf Seq.2 Index+1}
+               tree(key:Seq.1 value:NewTree leaf leaf)
+            end
 
-   proc  {InsertSec H}
-      %case H|T 
-      %of nil then nil
-      %[] T==nil then nil
-      %end
+         [] tree(key:Y value:V T1 T2) andthen Seq.1 == Y then 
+            % We found first word, thus we must insert in the second tree which is V
+            NewTree = {InsertTrees V Seq.2 Index+1}
+            tree(key:Y value:NewTree T1 T2)
 
-      %case Tree of leaf then %the 2nd tree doesn't exist
-	      %tree(key:H.1 value:H.2 leaf leaf) %we've initialised the 3rd to be word|nil and we will build rest of list off of this
-      %[] tree(key:Y value:V T1 T2) andthen H.1 == Y then %we add the 3word to the list of words
-	      %tree(key: Y value H.2.1|V T1 T2)
-      %[] tree(key:Y value:V T1 T2) andthen H.1 < Y then
-	      %tree(key: Y value:V  {InsertSec H T} T2)
-      %[] tree(key:Y value:V T1 T2) andthen H.1 > Y then
-	      %tree(key: Y value:V T1 {InsertSec H T})
-      %end
+         [] tree(key:Y value:V T1 T2) andthen {String.toAtom Seq.1} < {String.toAtom Y} then
+            NewTree = {InsertTrees T1 Seq Index}
+            tree(key: Y value:V NewTree T2)
 
-      Dummy = 0
+         [] tree(key:Y value:V T1 T2) andthen {String.toAtom Seq.1} > {String.toAtom Y} then
+            NewTree = {InsertTrees T2 Seq Index}
+            tree(key: Y value:V T1 NewTree)
+            
+         [] A then Tree+1 % Si c'est une valeur numérique, c'est qu'on a trouvé le 3e mot et qu'on peut l'incrémenter !
+         end
+      end
    end
 
 
@@ -338,16 +383,16 @@ define
    in
       Args.'folder'
    end
-    
+   
    %%% Procedure principale qui cree la fenetre et appelle les differentes procedures et fonctions
    proc {Main}
-      local NbThreads SourceFolder InputText OutputText Description Window SeparatedWordsStream SeparatedWordsPort in
+      local NbThreads SourceFolder Description Window SeparatedWordsStream SeparatedWordsPort in
          {Property.put print foo(width:1000 depth:1000)}  % for stdout siz
       
          % Creation de l'interface graphique
          Description=td(
             title: "Text predictor"
-            lr(text(handle:InputText width:50 height:10 background:white foreground:black wrap:word) button(text:"Predict" width:15 action:Press))
+            lr(text(handle:InputText width:50 height:10 background:white foreground:black wrap:word) button(text:"Predict" width:15 action: proc {$} Y in Y = {Press} end))
             text(handle:OutputText width:50 height:10 background:black foreground:white glue:w wrap:word)
             action:proc{$}{Application.exit 0} end % quitte le programme quand la fenetre est fermee
          )
@@ -376,10 +421,12 @@ define
          NbThreads = NFiles * 3
          SeparatedWordsPort = {NewPort SeparatedWordsStream}
          {LaunchThreads SeparatedWordsPort NbThreads}
-         {SaveFromStream SeparatedWordsStream 1 NbThreads nil}
+         {SaveFromStream NbThreads leaf SeparatedWordsStream 1}
+         {Browse 0}
       
          {InputText set(1:"")}
       end
+      %%ENDOFCODE%%
    end
    % Appelle la procedure principale
    {Main}
