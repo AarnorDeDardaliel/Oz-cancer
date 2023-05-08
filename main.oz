@@ -40,7 +40,8 @@ define
          % Etablir la réponse
          Val = nil % Liste des most probable words
          Freq = 0
-         Ans = Val | Freq | nil
+	 Ans = Val | Freq | nil
+	 %Listofwords = {FindFirst Words TreeDatabase} %Words are the two words that the users has writte 
          Ans
       end
    end
@@ -48,6 +49,30 @@ define
    proc {PressHelper} % Procédure exécutée par chaque thread après l'initialisation (Useless pour le moment je pense. Pour les bonus ?)
       Dummy = 0
    end
+
+   %fun {FindFirst Words Tree}
+    %  case Tree
+     % of leaf then nil
+      %[] tree(key:Y value:V T1 T2) andthen Words.1 == Y then
+%	 {FindSec Words.2 V}
+ %     [] tree(key:Y value:V T1 T2) andthen Words.1 < Y then
+%	 {FindFirst Words T1}
+ %     [] tree(key:Y value:V T1 T2) andthen Words.1 > Y then
+%	 {FindFirst Words T2}
+ %  end
+%end
+%fun {FindSec Words Tree}
+ %  case Tree
+  % of leaf then nil
+   %[] tree(key:Y value:V T1 T2) andthen Words.1 == Y then
+    %  V
+   %[] tree(key:Y value:V T1 T2) andthen Words.1 < Y then
+    %  {FindSec Words T1}
+   %[] tree(key:Y value:V T1 T2) andthen Words.1 > Y then
+    %  {FindSec Words T2}
+   %end
+%end      
+      
    
    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
