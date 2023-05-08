@@ -18,6 +18,7 @@ define
       from Open.file Open.text
    end
 
+   %{BrowserObject.option(representation strings:true)}
    proc {Browse Buf}
       {Browser.browse Buf}
    end
@@ -54,12 +55,17 @@ define
    % WordHead and WordTail are used to assemble caracs into words, as we read the file
    % Valid is 1 if there is at least 1 letter in the word
    proc {Read1File File BuffTail}
-      local NewBuffTail in
+      local NewBuffTail TheChar in
          local
-            proc {Manage Carac} BuffTail = Carac|NewBuffTail end
+            proc {Manage Carac} 
+               TheChar = Carac
+               BuffTail = Carac|NewBuffTail 
+            end
          in
             {File read(list:{Manage} size:1)}
-            {Read1File File NewBuffTail}
+            case TheChar of nil then skip
+            else {Read1File File NewBuffTail}
+            end
          end
       end
    end
@@ -113,14 +119,24 @@ define
             end
          in
             case CaracBuff
-            of W|S2 then {Parse W} {ParseCaracs S2 NewHead NewTail NewWordBuff}
+            of W|S2 then 
+               case W of nil then {Parse W} NewWordBuff = nil
+               else {Parse W} {ParseCaracs S2 NewHead NewTail NewWordBuff}
+               end
             [] nil then skip end
          end
       end
    end
 
    % Parse WordBuff : Faire des listes de N mots en les envoyer sur le Port
-   % Pour chaque mot : 
+   % Inputs :
+   %     - N : Le N de "N-gramme"
+   %     - WordBuff : Le buffer de mots à lire
+   %     - Port : Le Port sur lequel envoyer les listes
+   %     - 
+   %     - 
+   %     - 
+   % Procédure pour chaque mot : 
    %     - L'ajoute à la première étape du WorkTree
    %     - Si Count est > N, l'envoie prends le suivant comme future tête
    %     - L'ajoute aux étapes suivantes
@@ -132,20 +148,22 @@ define
       local NewWorkTree NewWorkTails NewTailsTail in
          local
             proc {Manage WordHead WordTail X Step}
+               % {Browse Count|Step|nil}
+               % {Browse WordHead}
+
                local NewWordTail NewTreeTail in
-                  case Step
-                  of Count then % Ajouter l'étape suivante, puis si c'est le tout premier set NewWorkTree et NewWorkTree, sinon juste NewTailsTail
+                  if Step == Count then % Ajouter l'étape suivante, puis si c'est le tout premier set NewWorkTree et NewWorkTree, sinon juste NewTailsTail
                      WordHead = (X|NewWordTail)|NewTreeTail
-                     if Step > 0 then 
-                        NewTailsTail = NewWordTail|NewTreeTail % Step == Count > 0, NewTailsTail a déjà été link à NewWorkTails !
-                     else
+                     if Step == 0 then
                         WordTail = NewWordTail|NewTreeTail
                         NewWorkTree = WorkTree
                         NewWorkTails = WorkTails
+                     else % Step == Count > 0, NewTailsTail a déjà été link à NewWorkTails !
+                        NewTailsTail = NewWordTail|NewTreeTail
                      end
 
-                  [] 0 then
-                     if Count < N then 
+                  elseif Step == 0 then
+                     if Count < N then
                         % Si Count est < N (équilibre pas encore atteint), ajouter X mais garder le même NewWorkTree (et set NewWorkTails = NewWordTail|NewTailsTail)
                         WordTail.1 = X|NewWordTail
                         NewWorkTails = NewWordTail|NewTailsTail
@@ -161,7 +179,7 @@ define
                         {Manage WordHead.2 WorkTails.2 X Step+1}
                      end
                      
-                  [] N then % Ajouter l'étape suivante et c'est fini ! (Pareil que Step == Count > 0, mais chiant et inutile de bloquer Count à N)
+                  elseif Step == N then % Ajouter l'étape suivante et c'est fini ! (Pareil que Step == Count > 0, mais chiant et inutile de bloquer Count à N)
                      WordHead = (X|NewWordTail)|NewTreeTail
                      NewTailsTail = NewWordTail|NewTreeTail
 
@@ -176,11 +194,14 @@ define
             end
          in
             case WordBuff
-            of H|T then % TODO : TESTER LES CAS LIMITES ICI !! (Fins de phrase / fichier / lecture)
-               {Browse H}% {Manage WorkTree WorkTails H 0} 
-               {ParseWords N T Port NewWorkTree NewWorkTails Count+1}
-            [] nil then skip
-            else skip
+            of H|T then
+               case H of "\n" then % Fin de phrase
+                  {ParseWords N T Port NewWorkTree NewWorkTails 0}
+               else
+                  {Manage WorkTree WorkTails H 0}
+                  {ParseWords N T Port NewWorkTree NewWorkTails Count+1}
+               end
+            [] nil then {Send Port nil} % Fin d'exécution !
             end
          end
       end
@@ -192,7 +213,7 @@ define
    proc {LaunchThreads Port NbThreads}
       local
          FoldName = {Append TweetsFolder "/"}
-         % Execution si on veut 2 threads par file (1 pour lire, 1 pour parse)
+         % Execution si on veut 3 threads par file (1 pour lire, 2 pour parse)
          proc {FullLaunchThreads Folder}
             case Folder of nil then skip
             [] H|T then
@@ -220,7 +241,7 @@ define
       in
          % Lancement de la procédure
          local Mid SourceFolder in
-            Mid = NbThreads div 2
+            Mid = NbThreads div 3
             SourceFolder = {OS.getDir TweetsFolder}
             case Mid of NFiles then {FullLaunchThreads SourceFolder} else {DefLaunchThreads SourceFolder} end
          end
@@ -229,16 +250,17 @@ define
 
    % Enregistre les N-gramme dans la database. Compte également le nombre de Threads qui ont terminé pour savoir quand s'arrêter
    % ATTENTION, valeur initiale de NilCount = 1 !!
-   proc {SaveFromStream TheStream NilCount NbThreads}
+   proc {SaveFromStream TheStream NilCount NbThreads LocDatabase}
       case TheStream of H|T then
          case H of nil then
             {Browse 0}
-            case NilCount of NbThreads then skip else {SaveFromStream T NilCount+1 NbThreads} end
+            case NilCount of NbThreads then 
+               TreeDatabase = LocDatabase 
+               {Browse TreeDatabase}
+            else {SaveFromStream T NilCount+1 NbThreads LocDatabase} end
          else
-            % TODO : Enregistrer H dans TreeDatabase !
-            {Browse H}
-
-            {SaveFromStream T NilCount NbThreads}
+            % TODO : Enregistrer H dans TreeDatabase ! (Pour l'instant je fais avec une liste)
+            {SaveFromStream T NilCount NbThreads H|LocDatabase}
          end
       end
    end
@@ -326,10 +348,10 @@ define
          end
 
          % On lance les threads de lecture et de parsing, puis de création de la Database
-         NbThreads = NFiles * 2
+         NbThreads = NFiles * 3
          SeparatedWordsPort = {NewPort SeparatedWordsStream}
          {LaunchThreads SeparatedWordsPort NbThreads}
-         {SaveFromStream SeparatedWordsStream 1 NbThreads}
+         {SaveFromStream SeparatedWordsStream 1 NbThreads nil}
       
          {InputText set(1:"")}
       end
