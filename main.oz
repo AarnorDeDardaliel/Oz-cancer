@@ -53,59 +53,13 @@ define
    % Read File and send words on BuffTail - 1 thread for each file exec
    % WordHead and WordTail are used to assemble caracs into words, as we read the file
    % Valid is 1 if there is at least 1 letter in the word
-   proc {Read1File File BuffTail Valid WordHead WordTail}
-      local NewBuffTail NewValid NewWordHead NewWordTail in
+   proc {Read1File File BuffTail}
+      local NewBuffTail in
          local
-            proc {Manage Carac}
-               local
-                  proc {Skip}
-                     NewBuffTail = BuffTail
-                     NewValid = Valid
-                     NewWordHead = WordHead
-                     NewWordTail = WordTail
-                  end
-                  proc {SendWord X}
-                     if Valid == 1 then
-                        WordTail = nil
-                        BuffTail = WordHead|NewBuffTail
-                        NewWordHead = NewWordTail
-                        NewValid = 0
-                     else {Skip} end
-                  end
-                  proc {SendEndWord X}
-                     if Valid == 1 then
-                        WordTail = nil
-                        BuffTail = WordHead|"\n"|NewBuffTail
-                        NewWordHead = NewWordTail
-                        NewValid = 0
-                     else {Skip} end
-                  end
-               in
-                  % If Carac == "'" ou "-", skip (transmettre les variables à la récursion suivante)
-                  % If Carac == " ", add nil à WordHead et l'envoie sur le Buffer. NewWordHead = NewBuffTail = stream vide.
-                  % If Carac == ".", "!", "\n" ou nil, même chose mais envoie aussi le mot "\n" sur le Buffer ("\n\n\n" pour nil) => Les retours à la ligne sont des "\r\n", mais étrangement on peut ignorer les "\r"
-                  % Sinon, NewWordHead = WordHead, BuffTail = Carac|NewBuffTail
-                  case Carac of "'" then {Skip}
-                  [] "-" then {Skip}
-
-                  [] " " then {SendWord WordHead}
-                  [] "," then {SendWord WordHead}
-
-                  [] "!" then {SendEndWord WordHead}
-                  [] "." then {SendEndWord WordHead}
-                  [] "\n" then {SendEndWord WordHead}
-                  [] nil then {SendEndWord WordHead}
-                  
-                  else % Ajouter la lettre au mot
-                     NewWordHead = WordHead
-                     WordTail = Carac.1|NewWordTail
-                     NewValid = 1
-                  end
-               end
-            end
+            proc {Manage Carac} BuffTail = Carac|NewBuffTail end
          in
             {File read(list:{Manage} size:1)}
-            {Read1File File NewBuffTail NewValid NewWordHead NewWordTail}
+            {Read1File File NewBuffTail}
          end
       end
    end
@@ -114,49 +68,120 @@ define
       Dummy = 0
    end
 
-
-
-
-   % 
-   % Count = 0
-   % Triples = []
-   % Sent : []
-   % 
-   % Count = 1
-   % Triples = [["coucou,"]]
-   % Sent : []
-   % 
-   % Count = 2
-   % Triples = [["coucou," "Je"] ["Je"]]
-   % Sent : []
-   % 
-   % Count = 3
-   % Triples = [["Je" "M'appelle"] ["M'appelle"]]
-   % Sent : ["coucou," "Je" "M'appelle"]
-   % 
-   % 
-   % Count = 3
-   % Triples = [["M'appelle" "Bryce,"] ["Bryce,"]]
-   % Sent : ["coucou," "Je" "M'appelle"] ["Je" "M'appelle" "Bryce,"]
-   % 
-   % Count = 3
-   % Triples = [["coucou," "Je" "M'appelle"] ["Je" "M'appelle"] ["M'appelle"]]
-   % Sent : ["coucou," "Je" "M'appelle"]
-
-
-   % Parse LocBuff : Faire des listes de N mots en les envoyer sur le Port
-   proc {ParseBuffer N Buffer Port TheWord Tail}
-      local NewWord NewTail in
+   % Parse CaracBuff : Rassembler les caractères récupérés sur CaracBuff en mots et les envoyer sur WordBuff
+   proc {ParseCaracs CaracBuff Head Tail WordBuff}
+      local NewHead NewTail NewWordBuff in
          local
-            proc {Parse Word}
-               % TODO : Faire des triplettes avec le stream de words
-               {Browse Word}
-               Dummy = 0
+            proc {Parse Carac}
+               local
+                  proc {Skip}
+                     NewWordBuff = WordBuff
+                     NewHead = Head
+                     NewTail = Tail
+                  end
+                  proc {SendWord X}
+                     Tail = nil
+                     WordBuff = X|NewWordBuff
+                     NewHead = NewTail
+                  end
+                  proc {SendEndWord X}
+                     Tail = nil
+                     WordBuff = X|"\n"|NewWordBuff
+                     NewHead = NewTail
+                  end
+               in
+                  % Signale une fin de phrase
+                  case Carac of nil then {SendEndWord Head}
+                  [] "!" then {SendEndWord Head}
+                  [] "." then {SendEndWord Head}
+                  [] "\n" then {SendEndWord Head}
+                  
+                  % Signale une fin de mot
+                  [] " " then {SendWord Head}
+                  [] "," then {SendWord Head}
+                  
+                  % A ignorer
+                  [] "'" then {Skip}
+                  [] "-" then {Skip}
+                  
+                  else % Ajouter la lettre au mot
+                     NewHead = Head
+                     Tail = Carac.1|NewTail
+                     NewWordBuff = WordBuff
+                  end
+               end
             end
          in
-            case Buffer of
-            W|S2 then {Parse W} {ParseBuffer N S2 Port NewWord NewTail}
+            case CaracBuff
+            of W|S2 then {Parse W} {ParseCaracs S2 NewHead NewTail NewWordBuff}
             [] nil then skip end
+         end
+      end
+   end
+
+   % Parse WordBuff : Faire des listes de N mots en les envoyer sur le Port
+   % Pour chaque mot : 
+   %     - L'ajoute à la première étape du WorkTree
+   %     - Si Count est > N, l'envoie prends le suivant comme future tête
+   %     - L'ajoute aux étapes suivantes
+   %     - Crée l'étape suivante avec le mot
+   %
+   %     => POUR ETAPES VISUELLES, VOIR Ngramme.oz !!
+   %
+   proc {ParseWords N WordBuff Port WorkTree WorkTails Count}
+      local NewWorkTree NewWorkTails NewTailsTail in
+         local
+            proc {Manage WordHead WordTail X Step}
+               local NewWordTail NewTreeTail in
+                  case Step
+                  of Count then % Ajouter l'étape suivante, puis si c'est le tout premier set NewWorkTree et NewWorkTree, sinon juste NewTailsTail
+                     WordHead = (X|NewWordTail)|NewTreeTail
+                     if Step > 0 then 
+                        NewTailsTail = NewWordTail|NewTreeTail % Step == Count > 0, NewTailsTail a déjà été link à NewWorkTails !
+                     else
+                        WordTail = NewWordTail|NewTreeTail
+                        NewWorkTree = WorkTree
+                        NewWorkTails = WorkTails
+                     end
+
+                  [] 0 then
+                     if Count < N then 
+                        % Si Count est < N (équilibre pas encore atteint), ajouter X mais garder le même NewWorkTree (et set NewWorkTails = NewWordTail|NewTailsTail)
+                        WordTail.1 = X|NewWordTail
+                        NewWorkTails = NewWordTail|NewTailsTail
+                        
+                        NewWorkTree = WorkTree
+                        {Manage WordHead.2 WordTail.2 X Step+1}  
+                     else
+                        % Sinon ajouter X aussi et envoyer sur le Port, puis prends le suivant comme NewWorkTree
+                        % Redéfinir NewWorkTails au fur et à mesure !!
+                        WordTail.1 = X|nil
+                        {Send Port WordHead.1}
+                        NewWorkTree = WorkTree.2
+                        {Manage WordHead.2 WorkTails.2 X Step+1}
+                     end
+                     
+                  [] N then % Ajouter l'étape suivante et c'est fini ! (Pareil que Step == Count > 0, mais chiant et inutile de bloquer Count à N)
+                     WordHead = (X|NewWordTail)|NewTreeTail
+                     NewTailsTail = NewWordTail|NewTreeTail
+
+                  else
+                     % Sinon, ajouter X à l'étape suivante "normalement"
+                     WordTail.1 = X|NewWordTail
+                     NewWorkTails = NewWordTail|NewTailsTail
+
+                     {Manage WordHead.2 WordTail.2 X Step+1}
+                  end 
+               end
+            end
+         in
+            case WordBuff
+            of H|T then % TODO : TESTER LES CAS LIMITES ICI !! (Fins de phrase / fichier / lecture)
+               {Browse H}% {Manage WorkTree WorkTails H 0} 
+               {ParseWords N T Port NewWorkTree NewWorkTails Count+1}
+            [] nil then skip
+            else skip
+            end
          end
       end
    end
@@ -165,22 +190,23 @@ define
    %%% Lance les N threads de lecture et de parsing qui liront et traiteront tous les fichiers
    %%% Les threads de parsing envoient leur resultat au port Port
    proc {LaunchThreads Port NbThreads}
-      local 
+      local
          FoldName = {Append TweetsFolder "/"}
          % Execution si on veut 2 threads par file (1 pour lire, 1 pour parse)
          proc {FullLaunchThreads Folder}
             case Folder of nil then skip
             [] H|T then
                thread
-                  local LocBuf Tail File Name in
+                  local File Name CaracBuff WordBuff in
+
                      % Thread pour parser les infos (N-gramme)
-                     thread local Empty in {ParseBuffer 3 LocBuf Port Empty Empty} end {PressHelper} end
+                     thread local LocBuff in {ParseCaracs CaracBuff LocBuff LocBuff WordBuff} end {PressHelper} end
+                     thread local LocBuff2 LocTails2 in {ParseWords 2 WordBuff Port LocBuff2 LocTails2 0} end {PressHelper} end
                      
-                     % Lit les fichiers !! (sous-fonction récursive pour Tail)
+                     % Lit les fichiers !! (sous-fonction récursive pour CaracTail)
                      Name = {Append FoldName H}
                      File = {New Open.file init(name:{String.toAtom Name} flags:[read])}
-                     LocBuf = Tail
-                     local Empty in {Read1File File Tail 0 Empty Empty} end
+                     local Empty in {Read1File File CaracBuff} end
                   end
                   {PressHelper}
                end
@@ -203,54 +229,57 @@ define
 
    % Enregistre les N-gramme dans la database. Compte également le nombre de Threads qui ont terminé pour savoir quand s'arrêter
    % ATTENTION, valeur initiale de NilCount = 1 !!
-   proc {SaveFromStream TheStream TreeDatabase NilCount NbThreads}
+   proc {SaveFromStream TheStream NilCount NbThreads}
       case TheStream of H|T then
          case H of nil then
             {Browse 0}
-            case NilCount of NbThreads then skip else {SaveFromStream T TreeDatabase NilCount+1 NbThreads} end
+            case NilCount of NbThreads then skip else {SaveFromStream T NilCount+1 NbThreads} end
          else
             % TODO : Enregistrer H dans TreeDatabase !
-            {InsertFirst H TreeDatabase}
+            {Browse H}
 
-            {SaveFromStream T TreeDatabase NilCount NbThreads}
+            {SaveFromStream T NilCount NbThreads}
          end
       end
    end
 
-   proc {InsertFirst H Tree}
-      case H|T of
-	 nil then nil
-      [] T==nil then nil
-	 end
-      end
+   proc {InsertFirst H}
+      %case H|T of
+	   %nil then nil
+      %[] T==nil then nil
+	   %end
+      %
+      %case Tree of leaf then %there is no database for the moment
+	      %tree(key:H.1 value:H.2.1 leaf leaf)
+	      %{InsertSec H.2 leaf} %for the moment, the second tree doens't exist
+      %[] tree(key:Y value:V T1 T2) andthen H.1 == Y then %means we found first word, we must insert in the second tree which is V
+	      %{InsertSec H.2 V}
+      %[] tree(key:Y value:V T1 T2) andthen H.1 < Y then
+	      %tree(key: Y value:V  {InsertFirst H T} T2)
+      %[] tree(key:Y value:V T1 T2) andthen H.1 > Y then
+	      %tree(key: Y value:V T1 {InsertFirst H T})
+      %end
       
-      case Tree of leaf then %there is no database for the moment
-	 tree(key:H.1 value:H.2.1 leaf leaf)
-	 {InsertSec H.2 leaf} %for the moment, the second tree doens't exist
-      [] tree(key:Y value:V T1 T2) andthen H.1 == Y then %means we found first word, we must insert in the second tree which is V
-	 {InsertSec H.2 V}
-      [] tree(key:Y value:V T1 T2) andthen H.1 < Y then
-	 tree(key: Y value:V  {InsertFirst H T} T2)
-      [] tree(key:Y value:V T1 T2) andthen H.1 > Y then
-	 tree(key: Y value:V T1 {InsertFirst H T})
-      end
+      Dummy = 0
    end
 
-   proc  {InsertSec H Tree}
-      case H|T of
-	 nil then nil
-      [] T==nil then nil
-	 end
-      end
-      case Tree of leaf then %the 2nd tree doesn't exist
-	 tree(key:H.1 value:H.2 leaf leaf) %we've initialised the 3rd to be word|nil and we will build rest of list off of this
-      [] tree(key:Y value:V T1 T2) andthen H.1 == Y then %we add the 3word to the list of words
-	 tree(key: Y value H.2.1|V T1 T2)
-      [] tree(key:Y value:V T1 T2) andthen H.1 < Y then
-	 tree(key: Y value:V  {InsertSec H T} T2)
-      [] tree(key:Y value:V T1 T2) andthen H.1 > Y then
-	 tree(key: Y value:V T1 {InsertSec H T})
-      end
+   proc  {InsertSec H}
+      %case H|T 
+      %of nil then nil
+      %[] T==nil then nil
+      %end
+
+      %case Tree of leaf then %the 2nd tree doesn't exist
+	      %tree(key:H.1 value:H.2 leaf leaf) %we've initialised the 3rd to be word|nil and we will build rest of list off of this
+      %[] tree(key:Y value:V T1 T2) andthen H.1 == Y then %we add the 3word to the list of words
+	      %tree(key: Y value H.2.1|V T1 T2)
+      %[] tree(key:Y value:V T1 T2) andthen H.1 < Y then
+	      %tree(key: Y value:V  {InsertSec H T} T2)
+      %[] tree(key:Y value:V T1 T2) andthen H.1 > Y then
+	      %tree(key: Y value:V T1 {InsertSec H T})
+      %end
+
+      Dummy = 0
    end
 
 
@@ -300,7 +329,7 @@ define
          NbThreads = NFiles * 2
          SeparatedWordsPort = {NewPort SeparatedWordsStream}
          {LaunchThreads SeparatedWordsPort NbThreads}
-         {SaveFromStream SeparatedWordsStream TreeDatabase 1 NbThreads}
+         {SaveFromStream SeparatedWordsStream 1 NbThreads}
       
          {InputText set(1:"")}
       end
